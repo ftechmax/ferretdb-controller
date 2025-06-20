@@ -1,0 +1,68 @@
+name: Merge Workflow
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'internal/**'
+      - 'main.go'
+      - '**/*.mod'
+      - '**/*.sum'
+      - 'Dockerfile'
+
+jobs:
+  build:
+    runs-on: [ubuntu-latest]
+    env:
+      DOTNET_INSTALL_DIR: './.dotnet'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install DotNet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v3.2.1
+        with:
+          versionSpec: '6.x'
+
+      - name: Run GitVersion
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v3.2.1
+        with:
+          useConfigFile: true
+          configFilePath: .github/gitversion.yaml
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/ferretdb-controller:${{ steps.gitversion.outputs.MajorMinorPatch }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/ferretdb-controller:latest
+
+      - name: Log out from DockerHub
+        run: docker logout
+
+      - name: Create Release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.gitversion.outputs.MajorMinorPatch }}
+          name: Release ${{ steps.gitversion.outputs.MajorMinorPatch }}
+          generateReleaseNotes: true

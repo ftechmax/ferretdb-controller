@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ferretdb-controller
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ferretdb-controller
+rules:
+  - apiGroups: ['ftechmax.net']
+    resources: ['ferretdbusers']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['ftechmax.net']
+    resources: ['ferretdbusers/status']
+    verbs: ['get', 'update', 'patch']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ferretdb-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ferretdb-controller
+subjects:
+  - kind: ServiceAccount
+    name: ferretdb-controller

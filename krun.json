@@ -1,0 +1,8 @@
+[
+  {
+    "name": "ferretdb-controller",
+    "path": ".",
+    "dockerfile": ".",
+    "context": "."
+  }
+]

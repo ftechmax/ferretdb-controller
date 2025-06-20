@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ferretdb-controller
+  labels:
+    app: ferretdb-controller
+  annotations:
+    reloader.stakater.com/secret: ferretdb-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ferretdb-controller
+  template:
+    metadata:
+      labels:
+        app: ferretdb-controller
+    spec:
+      serviceAccountName: ferretdb-controller
+      automountServiceAccountToken: true
+      containers:
+        - name: ferretdb-controller
+          image: ferretdb-controller
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: ferretdb-postgres
+          env:
+            - name: POSTGRES_HOST
+              value: ferretdb-postgres
+            - name: POSTGRES_PORT
+              value: '5432'
+            - name: POSTGRES_DATABASE
+              value: postgres
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5

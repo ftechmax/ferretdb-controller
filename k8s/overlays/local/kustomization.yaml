@@ -1,0 +1,18 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ferretdb-system
+resources:
+  - ./../../base
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+    target:
+      kind: Deployment
+      name: ferretdb-controller
+images:
+  - name: ferretdb-controller
+    newName: registry:5000/ferretdb-controller
+    newTag: latest
