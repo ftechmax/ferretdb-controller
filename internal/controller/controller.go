@@ -18,12 +18,21 @@ type FerretDbUserSpec struct {
 	Roles    []string `json:"roles,omitempty"` // Optional roles for the user
 }
 
+// FerretDbUserStatus defines the observed state of FerretDbUser
+// State can be: "Creating", "Ready", "Error"
+// +k8s:deepcopy-gen=true
+// +optional
+type FerretDbUserStatus struct {
+	State string `json:"state,omitempty"`
+}
+
 // FerretDbUser is the CR struct
 // +k8s:deepcopy-gen=true
 type FerretDbUser struct {
 	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              FerretDbUserSpec `json:"spec,omitempty"`
+	metav1.ObjectMeta `json:"metadata"`
+	Spec              FerretDbUserSpec   `json:"spec"`
+	Status            FerretDbUserStatus `json:"status"`
 }
 
 // FerretDbUserController handles FerretDbUser CR events

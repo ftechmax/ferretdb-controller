@@ -15,17 +15,20 @@ spec:
             spec:
               type: object
               properties:
-                username:
-                  type: string
-                password:
-                  type: string
                 database:
+                  type: string
+                secret:
                   type: string
                 roles:
                   type: array
                   items:
                     type: string
-
+            status:
+              type: object
+              properties:
+                state:
+                  type: string
+                  description: State of the created user (Creating, Ready, Error)
       subresources:
         status: {}
   scope: Cluster

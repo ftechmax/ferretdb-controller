@@ -18,21 +18,10 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-func startHttpServer() {
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	})
-	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	})
-	log.Println("Starting HTTP server on :8080 for health/readiness probes...")
-	err := http.ListenAndServe(":8080", nil)
-	if err != nil {
-		log.Printf("HTTP server error: %v\n", err)
-	}
-}
+var (
+	globalDynClient dynamic.Interface
+	globalGVR       schema.GroupVersionResource
+)
 
 func main() {
 	log.Println("Starting FerretDbUser controller...")
@@ -50,6 +39,7 @@ func main() {
 	if err != nil {
 		log.Panic(err.Error())
 	}
+	globalDynClient = dynClient
 
 	// Add: create a typed clientset for secrets
 	clientset, err := kubernetes.NewForConfig(config)
@@ -62,6 +52,7 @@ func main() {
 		Version:  "v1alpha1",
 		Resource: "ferretdbusers",
 	}
+	globalGVR = gvr
 
 	ctx := context.Background()
 	watcher, err := dynClient.Resource(gvr).Watch(ctx, metav1.ListOptions{
@@ -84,6 +75,9 @@ func main() {
 		onUpdateWithSecret,
 		onDeleteWithSecret,
 	)
+	if err != nil {
+		log.Panicf("Error creating FerretDbUser controller: %v", err)
+	}
 
 	stop := make(chan struct{})
 	defer close(stop)
@@ -105,10 +99,14 @@ func onAdd(obj any, clientset *kubernetes.Clientset) {
 		return
 	}
 
+	// Set status to Creating
+	setUserStatus(u, "Creating")
+
 	// Fetch secret
 	secret, err := clientset.CoreV1().Secrets(u.GetNamespace()).Get(context.Background(), cr.Spec.Secret, metav1.GetOptions{})
 	if err != nil {
 		log.Printf("Could not fetch secret %s: %v", cr.Spec.Secret, err)
+		setUserStatus(u, "Error")
 		return
 	}
 	username := string(secret.Data["username"])
@@ -116,7 +114,11 @@ func onAdd(obj any, clientset *kubernetes.Clientset) {
 
 	if err := db.CreatePostgresUser(username, password, cr.Spec.Database); err != nil {
 		log.Printf("Error creating user: %v\n", err)
+		setUserStatus(u, "Error")
+		return
 	}
+
+	setUserStatus(u, "Ready")
 }
 
 // onUpdate handles updates to FerretDbUser CRs
@@ -188,5 +190,30 @@ func onDelete(obj any, clientset *kubernetes.Clientset) {
 
 	if err := db.DeletePostgresUser(username, cr.Spec.Database); err != nil {
 		log.Printf("Error deleting user: %v\n", err)
+	}
+}
+
+// setUserStatus updates the status.state of a FerretDbUser CR
+func setUserStatus(u *unstructured.Unstructured, state string) {
+	u.Object["status"] = map[string]any{"state": state}
+	_, err := globalDynClient.Resource(globalGVR).Namespace(u.GetNamespace()).UpdateStatus(context.Background(), u, metav1.UpdateOptions{})
+	if err != nil {
+		log.Printf("Failed to set status to %s: %v", state, err)
+	}
+}
+
+func startHttpServer() {
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+	log.Println("Starting HTTP server on :8080 for health/readiness probes...")
+	err := http.ListenAndServe(":8080", nil)
+	if err != nil {
+		log.Printf("HTTP server error: %v\n", err)
 	}
 }
