@@ -13,8 +13,10 @@ import (
 // Matches the CRD spec
 // +k8s:deepcopy-gen=true
 type FerretDbUserSpec struct {
+	Database    string   `json:"database"`
 	Secret   string   `json:"secret"`
-	Database string   `json:"database"`
+	UsernameKey string   `json:"usernameKey,omitempty"`
+	PasswordKey string   `json:"passwordKey,omitempty"`
 	Roles    []string `json:"roles,omitempty"` // Optional roles for the user
 }
 

@@ -8,12 +8,15 @@ kind: ClusterRole
 metadata:
   name: ferretdb-controller
 rules:
-  - apiGroups: ['ftechmax.net']
+  - apiGroups: ['k8s.ftechmax.net']
     resources: ['ferretdbusers']
-    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
-  - apiGroups: ['ftechmax.net']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['k8s.ftechmax.net']
     resources: ['ferretdbusers/status']
     verbs: ['get', 'update']
+  - apiGroups: ['']
+    resources: ['secrets']
+    verbs: ['get', 'list', 'watch']
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
