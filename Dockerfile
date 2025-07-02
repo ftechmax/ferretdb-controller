@@ -1,7 +1,7 @@
 FROM golang:1.24-alpine AS builder
 WORKDIR /app
 COPY . .
-RUN go build -o controller .
+RUN go build -o controller -ldflags "-s -w" .
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /app
