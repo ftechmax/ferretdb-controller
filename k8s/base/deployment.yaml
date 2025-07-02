@@ -6,6 +6,7 @@ metadata:
     app: ferretdb-controller
   annotations:
     reloader.stakater.com/secret: ferretdb-postgres
+    container.apparmor.security.beta.kubernetes.io/ferretdb-controller: runtime/default
 spec:
   replicas: 1
   selector:
@@ -18,10 +19,25 @@ spec:
     spec:
       serviceAccountName: ferretdb-controller
       automountServiceAccountToken: true
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: ferretdb-controller
           image: ferretdb-controller
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            privileged: false
+            procMount: Default
+            capabilities:
+              drop:
+                - ALL
           envFrom:
             - secretRef:
                 name: ferretdb-postgres
@@ -46,3 +62,10 @@ spec:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi

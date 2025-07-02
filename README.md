@@ -33,14 +33,23 @@ If it does not exist, then first deploy the FerretDB PostgreSQL backend and note
 ## Example FerretDbUser CRD
 
 ```yaml
-apiVersion: ferretdb.io/v1alpha1
+apiVersion: v1
+kind: Secret
+metadata:
+  name: appdb-user-secret
+  namespace: myapp
+stringData:
+  database_username: alice
+  database_password: s3cr3t
+---
+apiVersion: k8s.ftechmax.net/v1alpha1
 kind: FerretDbUser
 metadata:
-  name: alice
+  name: appdb-user
+  namespace: myapp
 spec:
   database: appdb
-  username: alice
-  password: s3cr3t
+  secret: appdb-user-secret
   roles:
     - readWrite
     - dbAdmin
@@ -49,6 +58,16 @@ spec:
 ### Outcome
 
 - A new database named `appdb` will be created in FerretDB (if it does not already exist).
-- A user `alice` will be created with the password `s3cr3t` and assigned the `readWrite` and `dbAdmin` roles on the `appdb` database.
+- A user `alice` will be created with the password `s3cr3t`.
 - If the CRD is updated, the controller will update the user’s password and roles accordingly.
 - If the CRD is deleted, the user and (optionally) the database will be removed from FerretDB.
+
+## CRD Reference
+
+The `FerretDbUser` CRD has the following spec fields:
+
+- `database`: The name of the database to create or manage
+- `secret`: The name of the Kubernetes Secret containing the user's credentials
+- `roles`: A list of roles to assign to the user (e.g., `readWrite`, `dbAdmin`)
+- `usernameKey`: The key in the secret that contains the username (default: `database_username`)
+- `passwordKey`: The key in the secret that contains the password (default: `database_password`)
