@@ -2,7 +2,7 @@
 package main
 
 import (
-	context "context"
+	"context"
 	"log"
 	"net/http"
 
@@ -18,10 +18,11 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-var (
-	globalDynClient dynamic.Interface
-	globalGVR       schema.GroupVersionResource
-)
+type AppContext struct {
+	dynClient dynamic.Interface
+	gvr      schema.GroupVersionResource
+	clientset *kubernetes.Clientset
+}
 
 const (
 	usernameKey = "database_username"
@@ -43,7 +44,6 @@ func main() {
 	if err != nil {
 		log.Panic(err.Error())
 	}
-	globalDynClient = dynClient
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -55,7 +55,12 @@ func main() {
 		Version:  "v1alpha1",
 		Resource: "ferretdbusers",
 	}
-	globalGVR = gvr
+
+	appCtx := &AppContext{
+		dynClient: dynClient,
+		gvr:      gvr,
+		clientset: clientset,
+	}
 
 	watcher, err := dynClient.Resource(gvr).Watch(context.Background(), metav1.ListOptions{
 		FieldSelector: fields.Everything().String(),
@@ -68,10 +73,10 @@ func main() {
 		dynClient,
 		gvr,
 		watcher,
-		// Pass clientset to handlers via closure
-		func(obj any) { onAdd(obj, clientset) },
-		func(oldObj, newObj any) { onUpdate(oldObj, newObj, clientset) },
-		func(obj any) { onDelete(obj, clientset) },
+		// Pass appCtx to handlers via closure
+		func(obj any) { onAdd(obj, appCtx) },
+		func(oldObj, newObj any) { onUpdate(oldObj, newObj, appCtx) },
+		func(obj any) { onDelete(obj, appCtx) },
 	)
 	if err != nil {
 		log.Panicf("Error creating FerretDbUser controller: %v", err)
@@ -83,7 +88,7 @@ func main() {
 }
 
 // onAdd handles new FerretDbUser CRs
-func onAdd(obj any, clientset *kubernetes.Clientset) {
+func onAdd(obj any, appCtx *AppContext) {
 	u, ok := obj.(*unstructured.Unstructured)
 	if !ok {
 		log.Println("Could not cast to Unstructured")
@@ -98,44 +103,44 @@ func onAdd(obj any, clientset *kubernetes.Clientset) {
 	}
 
 	// Set status to Creating
-	setUserStatus(u, "Creating")
+	setUserStatus(u, "Creating", appCtx)
 
 	// Fetch credentials from secret
-	username, password, err := getCredentialsFromSecret(cr.Spec.Secret, u.GetNamespace(), cr, clientset)
+	username, password, err := getCredentialsFromSecret(cr.Spec.Secret, u.GetNamespace(), cr, appCtx)
 	if err != nil {
 		log.Printf("Error fetching credentials from secret '%s': %v", cr.Spec.Secret, err)
-		setUserStatus(u, "Error")
+		setUserStatus(u, "Error", appCtx)
 		return
 	}
 
 	if username == "" {
 		log.Printf("Secret '%s' missing key '%s' or value is empty", cr.Spec.Secret, usernameKey)
-		setUserStatus(u, "Error")
+		setUserStatus(u, "Error", appCtx)
 		return
 	}
 	if password == "" {
 		log.Printf("Secret '%s' missing key '%s' or value is empty", cr.Spec.Secret, passwordKey)
-		setUserStatus(u, "Error")
+		setUserStatus(u, "Error", appCtx)
 		return
 	}
 
 	if cr.Spec.Database == "" {
 		log.Printf("CR spec.database is empty")
-		setUserStatus(u, "Error")
+		setUserStatus(u, "Error", appCtx)
 		return
 	}
 
 	if err := db.CreatePostgresUser(username, password, cr.Spec.Database); err != nil {
 		log.Printf("Error creating user: %v\n", err)
-		setUserStatus(u, "Error")
+		setUserStatus(u, "Error", appCtx)
 		return
 	}
 
-	setUserStatus(u, "Ready")
+	setUserStatus(u, "Ready", appCtx)
 }
 
 // onUpdate handles updates to FerretDbUser CRs
-func onUpdate(oldObj, newObj any, clientset *kubernetes.Clientset) {
+func onUpdate(oldObj, newObj any, appCtx *AppContext) {
 	u, ok := newObj.(*unstructured.Unstructured)
 	if !ok {
 		log.Println("Could not cast new object to Unstructured")
@@ -157,12 +162,12 @@ func onUpdate(oldObj, newObj any, clientset *kubernetes.Clientset) {
 	}
 
 	// Fetch secrets for old and new
-	usernameNew, passwordNew, err := getCredentialsFromSecret(crNew.Spec.Secret, u.GetNamespace(), crNew, clientset)
+	usernameNew, passwordNew, err := getCredentialsFromSecret(crNew.Spec.Secret, u.GetNamespace(), crNew, appCtx)
 	if err != nil {
 		log.Printf("Could not fetch new credentials from secret %s: %v", crNew.Spec.Secret, err)
 		return
 	}
-	usernameOld, passwordOld, err := getCredentialsFromSecret(crOld.Spec.Secret, u.GetNamespace(), crOld, clientset)
+	usernameOld, passwordOld, err := getCredentialsFromSecret(crOld.Spec.Secret, u.GetNamespace(), crOld, appCtx)
 	if err != nil {
 		log.Printf("Could not fetch old credentials from secret %s: %v", crOld.Spec.Secret, err)
 		return
@@ -173,7 +178,7 @@ func onUpdate(oldObj, newObj any, clientset *kubernetes.Clientset) {
 }
 
 // onDelete handles deletion of FerretDbUser CRs
-func onDelete(obj any, clientset *kubernetes.Clientset) {
+func onDelete(obj any, appCtx *AppContext) {
 	u, ok := obj.(*unstructured.Unstructured)
 	if !ok {
 		log.Println("Could not cast to Unstructured")
@@ -188,7 +193,7 @@ func onDelete(obj any, clientset *kubernetes.Clientset) {
 	}
 
 	// Fetch secret
-	username, _, err := getCredentialsFromSecret(cr.Spec.Secret, u.GetNamespace(), cr, clientset)
+	username, _, err := getCredentialsFromSecret(cr.Spec.Secret, u.GetNamespace(), cr, appCtx)
 	if err != nil {
 		log.Printf("Could not fetch credentials from secret %s: %v", cr.Spec.Secret, err)
 		return
@@ -200,23 +205,23 @@ func onDelete(obj any, clientset *kubernetes.Clientset) {
 }
 
 // setUserStatus updates the status.state of a FerretDbUser CR
-func setUserStatus(u *unstructured.Unstructured, state string) {
+func setUserStatus(u *unstructured.Unstructured, state string, appCtx *AppContext) {
 	// Fetch the latest version of the object to avoid resource version conflicts
-	latest, err := globalDynClient.Resource(globalGVR).Namespace(u.GetNamespace()).Get(context.Background(), u.GetName(), metav1.GetOptions{})
+	latest, err := appCtx.dynClient.Resource(appCtx.gvr).Namespace(u.GetNamespace()).Get(context.Background(), u.GetName(), metav1.GetOptions{})
 	if err != nil {
 		log.Printf("Failed to fetch latest object for status update: %v", err)
 		return
 	}
 	latest.Object["status"] = map[string]any{"state": state}
-	_, err = globalDynClient.Resource(globalGVR).Namespace(u.GetNamespace()).UpdateStatus(context.Background(), latest, metav1.UpdateOptions{})
+	_, err = appCtx.dynClient.Resource(appCtx.gvr).Namespace(u.GetNamespace()).UpdateStatus(context.Background(), latest, metav1.UpdateOptions{})
 	if err != nil {
 		log.Printf("Failed to set status to %s: %v", state, err)
 	}
 }
 
 // getCredentialsFromSecret fetches the username and password from the Kubernetes secret listed in the CR
-func getCredentialsFromSecret(secretName string, namespace string,  cr controller.FerretDbUser, clientset *kubernetes.Clientset) (string, string, error) {
-	secret, err := clientset.CoreV1().Secrets(namespace).Get(context.Background(), secretName, metav1.GetOptions{})
+func getCredentialsFromSecret(secretName string, namespace string, cr controller.FerretDbUser, appCtx *AppContext) (string, string, error) {
+	secret, err := appCtx.clientset.CoreV1().Secrets(namespace).Get(context.Background(), secretName, metav1.GetOptions{})
 	if err != nil {
 		log.Printf("Could not fetch secret %s: %v", cr.Spec.Secret, err)
 		return "", "", err
