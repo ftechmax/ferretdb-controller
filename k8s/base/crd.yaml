@@ -8,15 +8,33 @@ spec:
     - name: v1alpha1
       served: true
       storage: true
+      additionalPrinterColumns:
+        - name: State
+          type: string
+          jsonPath: .status.state
+          description: Current state of the user
       schema:
         openAPIV3Schema:
           type: object
+          x-kubernetes-validations:
+            - rule: "self.spec.secret == self.metadata.name"
+              message: "spec.secret must match metadata.name"
           properties:
             spec:
               type: object
+              required:
+                - database
+                - secret
               properties:
                 database:
                   type: string
+                  maxLength: 63
+                  pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+                  description: PostgreSQL identifier (letters, digits, underscore; cannot start with a digit)
+                  x-kubernetes-validations:
+                    - rule: "oldSelf.hasValue() ? self == oldSelf.value() : true"
+                      message: "spec.database is immutable"
+                      optionalOldSelf: true
                 secret:
                   type: string
                 usernameKey:
@@ -31,6 +49,7 @@ spec:
                   type: array
                   items:
                     type: string
+                  default: []
             status:
               type: object
               properties:

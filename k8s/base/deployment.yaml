@@ -48,6 +48,8 @@ spec:
               value: '5432'
             - name: POSTGRES_DATABASE
               value: postgres
+            - name: POSTGRES_ALLOWED_ROLES
+              value: read,readWrite
           ports:
             - containerPort: 8080
           livenessProbe:

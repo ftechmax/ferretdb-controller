@@ -59,6 +59,12 @@ jobs:
       - name: Log out from DockerHub
         run: docker logout
 
+      - name: Generate Kubernetes manifest
+        run: |
+          kubectl kustomize k8s/overlays/production > ferretdb-controller.yaml
+          sed -i 's|{{REGISTRY}}|${{ secrets.DOCKERHUB_USERNAME }}|g' ferretdb-controller.yaml
+          sed -i 's|{{IMAGE_TAG}}|${{ steps.gitversion.outputs.MajorMinorPatch }}|g' ferretdb-controller.yaml
+
       - name: Create Release
         id: create_release
         uses: ncipollo/release-action@v1
@@ -66,3 +72,4 @@ jobs:
           tag: ${{ steps.gitversion.outputs.MajorMinorPatch }}
           name: Release ${{ steps.gitversion.outputs.MajorMinorPatch }}
           generateReleaseNotes: true
+          artifacts: ferretdb-controller.yaml

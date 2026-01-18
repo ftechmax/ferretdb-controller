@@ -1,0 +1,16 @@
+apiVersion: k8s.ftechmax.net/v1alpha1
+kind: FerretDbUser
+metadata:
+  name: alice
+spec:
+  database: appdb
+  secret: alice
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alice
+type: Opaque
+stringData:
+  database_username: alice
+  database_password: alicepassword
