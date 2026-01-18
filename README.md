@@ -74,6 +74,18 @@ The `FerretDbUser` CRD has the following spec fields:
 - `usernameKey`: The key in the secret that contains the username (default: `database_username`)
 - `passwordKey`: The key in the secret that contains the password (default: `database_password`)
 
+## Observability (OpenTelemetry)
+
+Telemetry is disabled by default. To enable it, set `OTEL_EXPORTER_OTLP_ENDPOINT` to your collector (gRPC), for example:
+
+```powershell
+kubectl -n ferretdb-system set env deployment/ferretdb-controller `
+  OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317 `
+  OTEL_EXPORTER_OTLP_INSECURE=true
+```
+
+If `OTEL_EXPORTER_OTLP_ENDPOINT` is empty, the controller logs only to stdout and skips OTEL exporters. `OTEL_SERVICE_NAME` defaults to `ferretdb-controller` when unset.
+
 ## Development
 
 ### Debugging PostgreSQL state

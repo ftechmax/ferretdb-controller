@@ -3,7 +3,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/ftechmax/ferretdb-controller/internal/controller"
 	"github.com/ftechmax/ferretdb-controller/internal/db"
+	"github.com/ftechmax/ferretdb-controller/internal/telemetry"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -20,36 +21,56 @@ import (
 )
 
 func main() {
-	log.Println("Starting FerretDb User Controller...")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	shutdown, err := telemetry.Init(ctx, telemetry.Config{
+		ServiceName: "ferretdb-controller",
+	})
+	if err != nil {
+		slog.Error("Failed to initialize telemetry", "error", err)
+	} else {
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			if err := shutdown(shutdownCtx); err != nil {
+				slog.Error("Failed to shut down telemetry", "error", err)
+			}
+		}()
+	}
+
+	slog.Info("Starting FerretDb User Controller")
 
 	go startHttpServer()
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		log.Panic(err.Error())
+		slog.Error("Failed to load in-cluster config", "error", err)
+		panic(err)
 	}
 
 	dynClient, err := dynamic.NewForConfig(config)
 	if err != nil {
-		log.Panic(err.Error())
+		slog.Error("Failed to create dynamic client", "error", err)
+		panic(err)
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		log.Panic(err.Error())
+		slog.Error("Failed to create Kubernetes client", "error", err)
+		panic(err)
 	}
 
 	pgConfig, err := db.LoadConfigFromEnv()
 	if err != nil {
-		log.Panic(err.Error())
+		slog.Error("Failed to load PostgreSQL config", "error", err)
+		panic(err)
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	pgClient, err := db.NewClient(ctx, pgConfig)
 	if err != nil {
-		log.Panic(err.Error())
+		slog.Error("Failed to create PostgreSQL client", "error", err)
+		panic(err)
 	}
 	defer pgClient.Close()
 
@@ -76,7 +97,7 @@ func main() {
 	}()
 
 	if err := ctrl.Run(stopCh); err != nil {
-		log.Printf("Controller exited with error: %v", err)
+		slog.Error("Controller exited with error", "error", err)
 		time.Sleep(2 * time.Second)
 	}
 }
@@ -99,8 +120,8 @@ func startHttpServer() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Println("Starting HTTP server on :8080 for health/readiness probes...")
+	slog.Info("Starting HTTP server on :8080 for health/readiness probes")
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Printf("HTTP server error: %v", err)
+		slog.Error("HTTP server error", "error", err)
 	}
 }

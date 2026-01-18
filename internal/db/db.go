@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -175,7 +175,7 @@ func (c *Client) createUserOnce(ctx context.Context, owner Ownership, username, 
 		if err := c.setRoleComment(ctx, username, owner); err != nil {
 			return err
 		}
-		log.Printf("Created PostgreSQL role %s", username)
+		slog.InfoContext(ctx, "Created PostgreSQL role", "role", username)
 	}
 
 	return nil
@@ -313,7 +313,7 @@ func (c *Client) createDatabaseOnce(ctx context.Context, owner Ownership, userna
 	if err := c.setDatabaseComment(ctx, database, owner); err != nil {
 		return err
 	}
-	log.Printf("Created PostgreSQL database %s with owner %s", database, username)
+	slog.InfoContext(ctx, "Created PostgreSQL database", "database", database, "owner", username)
 	return nil
 
 }
@@ -375,7 +375,7 @@ func (c *Client) deleteDatabaseOnce(ctx context.Context, owner Ownership, databa
 	if _, err := c.pool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbIdent)); err != nil {
 		return err
 	}
-	log.Printf("Deleted PostgreSQL database %s", database)
+	slog.InfoContext(ctx, "Deleted PostgreSQL database", "database", database)
 
 	return nil
 }
@@ -420,7 +420,7 @@ func (c *Client) deleteUserOnce(ctx context.Context, owner Ownership, username s
 	if _, err := c.pool.Exec(ctx, fmt.Sprintf("DROP ROLE IF EXISTS %s", userIdent)); err != nil {
 		return err
 	}
-	log.Printf("Deleted PostgreSQL role %s", username)
+	slog.InfoContext(ctx, "Deleted PostgreSQL role", "role", username)
 
 	return nil
 }
@@ -514,7 +514,7 @@ func (c *Client) RenameUser(ctx context.Context, owner Ownership, oldName, newNa
 	if _, err := c.pool.Exec(ctx, fmt.Sprintf("ALTER ROLE %s RENAME TO %s", oldIdent, newIdent)); err != nil {
 		return err
 	}
-	log.Printf("Renamed PostgreSQL role %s to %s", oldName, newName)
+	slog.InfoContext(ctx, "Renamed PostgreSQL role", "from", oldName, "to", newName)
 	return nil
 }
 

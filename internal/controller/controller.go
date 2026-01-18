@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -27,6 +27,11 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -49,6 +54,55 @@ type Controller struct {
 	informer  cache.SharedIndexInformer
 	secretInf cache.SharedIndexInformer
 	queue     workqueue.TypedRateLimitingInterface[string]
+	tracer    trace.Tracer
+	metrics   controllerMetrics
+}
+
+type controllerMetrics struct {
+	reconcileTotal    metric.Int64Counter
+	reconcileErrors   metric.Int64Counter
+	reconcileDuration metric.Float64Histogram
+}
+
+func newControllerMetrics(meter metric.Meter) controllerMetrics {
+	metrics := controllerMetrics{}
+	var err error
+	metrics.reconcileTotal, err = meter.Int64Counter(
+		"ferretdb_controller_reconcile_total",
+		metric.WithDescription("Total number of reconcile attempts"),
+	)
+	if err != nil {
+		slog.Error("Failed to create reconcile counter", "error", err)
+	}
+	metrics.reconcileErrors, err = meter.Int64Counter(
+		"ferretdb_controller_reconcile_errors_total",
+		metric.WithDescription("Total number of reconcile errors"),
+	)
+	if err != nil {
+		slog.Error("Failed to create reconcile error counter", "error", err)
+	}
+	metrics.reconcileDuration, err = meter.Float64Histogram(
+		"ferretdb_controller_reconcile_duration_seconds",
+		metric.WithDescription("Reconcile duration in seconds"),
+		metric.WithUnit("s"),
+	)
+	if err != nil {
+		slog.Error("Failed to create reconcile duration histogram", "error", err)
+	}
+	return metrics
+}
+
+func (m controllerMetrics) recordReconcile(ctx context.Context, result string, duration time.Duration) {
+	attrs := metric.WithAttributes(attribute.String("result", result))
+	if m.reconcileTotal != nil {
+		m.reconcileTotal.Add(ctx, 1, attrs)
+	}
+	if result == "error" && m.reconcileErrors != nil {
+		m.reconcileErrors.Add(ctx, 1)
+	}
+	if m.reconcileDuration != nil {
+		m.reconcileDuration.Record(ctx, duration.Seconds(), attrs)
+	}
 }
 
 func NewController(
@@ -59,6 +113,9 @@ func NewController(
 	watchNamespace string,
 ) *Controller {
 	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())
+	meter := otel.Meter("ferretdb-controller/controller")
+	metrics := newControllerMetrics(meter)
+	tracer := otel.Tracer("ferretdb-controller/controller")
 
 	namespace := strings.TrimSpace(watchNamespace)
 	if namespace == "" {
@@ -110,6 +167,8 @@ func NewController(
 		informer:  informer,
 		secretInf: secretInformer,
 		queue:     queue,
+		tracer:    tracer,
+		metrics:   metrics,
 	}
 
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -140,7 +199,7 @@ func (c *Controller) Run(stopCh <-chan struct{}) error {
 	go wait.Until(c.runWorker, time.Second, stopCh)
 
 	<-stopCh
-	log.Println("Stopping FerretDbUser controller...")
+	slog.Info("Stopping FerretDbUser controller")
 	return nil
 }
 
@@ -159,8 +218,22 @@ func (c *Controller) processNextItem() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := c.reconcile(ctx, key); err != nil {
-		log.Printf("Reconcile failed for %s: %v", key, err)
+	ctx, span := c.tracer.Start(ctx, "reconcile", trace.WithAttributes(attribute.String("resource.key", key)))
+	start := time.Now()
+	err := c.reconcile(ctx, key)
+	duration := time.Since(start)
+	result := "success"
+	if err != nil {
+		result = "error"
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	span.SetAttributes(attribute.String("result", result))
+	span.End()
+	c.metrics.recordReconcile(ctx, result, duration)
+
+	if err != nil {
+		slog.ErrorContext(ctx, "Reconcile failed", "key", key, "error", err)
 		c.queue.AddRateLimited(key)
 		return true
 	}
@@ -172,7 +245,7 @@ func (c *Controller) processNextItem() bool {
 func (c *Controller) enqueueObject(obj any) {
 	key, err := cache.MetaNamespaceKeyFunc(obj)
 	if err != nil {
-		log.Printf("Failed to get key for object: %v", err)
+		slog.Error("Failed to get key for object", "error", err)
 		return
 	}
 	if key == "" {
@@ -201,7 +274,7 @@ func (c *Controller) enqueueSecret(obj any) {
 	indexKey := fmt.Sprintf("%s/%s", secret.Namespace, secret.Name)
 	items, err := c.informer.GetIndexer().ByIndex(secretIndexKey, indexKey)
 	if err != nil {
-		log.Printf("Failed to find FerretDbUser for secret %s: %v", indexKey, err)
+		slog.Error("Failed to find FerretDbUser for secret", "secret", indexKey, "error", err)
 		return
 	}
 	for _, item := range items {
@@ -317,7 +390,7 @@ func (c *Controller) handleDeletion(ctx context.Context, u *unstructured.Unstruc
 
 	if err := c.pgClient.DeleteUserAndDatabase(ctx, owner, username, cr.Spec.Database); err != nil {
 		if db.IsNotManaged(err) {
-			log.Printf("Skipping deletion for unmanaged resources for %s/%s: %v", cr.Namespace, cr.Name, err)
+			slog.InfoContext(ctx, "Skipping deletion for unmanaged resources", "namespace", cr.Namespace, "name", cr.Name, "error", err)
 			return c.removeFinalizer(ctx, u)
 		}
 		return err
@@ -400,10 +473,10 @@ func (c *Controller) recordObservation(ctx context.Context, u *unstructured.Unst
 		secretChanged := prevSecretHash != secretHash
 		if !isFirstObservation {
 			if specChanged {
-				log.Printf("Detected FerretDbUser spec change for %s/%s", cr.Namespace, cr.Name)
+				slog.InfoContext(ctx, "Detected FerretDbUser spec change", "namespace", cr.Namespace, "name", cr.Name)
 			}
 			if secretChanged {
-				log.Printf("Detected secret data change for %s/%s (secret %s)", cr.Namespace, cr.Name, cr.Spec.Secret)
+				slog.InfoContext(ctx, "Detected secret data change", "namespace", cr.Namespace, "name", cr.Name, "secret", cr.Spec.Secret)
 			}
 		}
 
